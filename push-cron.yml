@@ -1,0 +1,47 @@
+name: NodeLoc push tick
+
+# 每 5 分钟触发一次站点的定时推送；并每月做一次保活提交，
+# 避免 GitHub 因「仓库 60 天无活动」自动禁用定时工作流。
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+    - cron: '0 3 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nodeloc-push-tick
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger NodeLoc scheduled push
+        env:
+          CRON_KEY: ${{ secrets.CRON_KEY }}
+        run: |
+          set -e
+          if [ -z "$CRON_KEY" ]; then
+            echo "::error::缺少仓库 Secret：CRON_KEY"
+            exit 1
+          fi
+          curl -sS --max-time 60 -H 'Accept: application/json' \
+            "https://user.nodeloc.nl/cron/push.php?key=${CRON_KEY}" | tee /tmp/resp.json
+          echo
+
+      - name: Monthly keep-alive commit
+        if: github.event.schedule == '0 3 1 * *'
+        run: |
+          set -e
+          git clone --depth 1 "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" /tmp/ka
+          cd /tmp/ka
+          date -u +'%Y-%m-%dT%H:%M:%SZ' >> heartbeat.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add heartbeat.txt
+          git commit -m "chore: keep-alive $(date -u +%Y-%m-%d)"
+          git push
